@@ -27,6 +27,8 @@ config = {
     "PARSING_ERROR_LIMIT": 50,
     "TEMPLATE_FILENAME": "report.html",
 }
+logfile_name_template = re.compile(r"^nginx-access-ui\.log-(?P<date>\d{8})(?P<extension>|\.gz)$")
+Logfile = namedtuple("Logfile", "filename date")
 
 
 def read_file(filename):
@@ -58,21 +60,17 @@ def read_file_lines(filename):
 
 
 def get_last_logfile(log_dir):
-    print(os.path.exists(log_dir))
     if not os.path.exists(log_dir):
         return None
-    logfile_name_template = re.compile(r"^nginx-access-ui\.log-(?P<date>\d{8})(?P<extension>|\.gz)$")
-    Logfile = namedtuple("Logfile", "filename date")
     last_logfile = Logfile("", "")
     last_log_date = ""
-    print(os.listdir(log_dir))
     for file in os.listdir(log_dir):
         matched = logfile_name_template.match(file)
         if matched:
             try:
                 file_date = datetime.datetime.strptime(matched.groupdict()["date"], "%Y%m%d")
             except ValueError:
-                logging.exception(
+                logging.debug(
                     "Cannot convert '%s' to datetime. Skipping '%s' file",
                     matched.groupdict()["date"],
                     file
@@ -82,11 +80,6 @@ def get_last_logfile(log_dir):
                 last_log_date = file_date
                 last_logfile = Logfile(os.path.join(log_dir, file), file_date)
     return last_logfile
-
-
-def get_report_name(log_date):
-    """Generates report name"""
-    return "report-{}.html".format(log_date.strftime("%Y.%m.%d"))
 
 
 def generate_report_data(request_time_dict, total_request_count, total_request_time, report_size):
@@ -173,7 +166,7 @@ def gen_config(config_file):
     try:
         file_content = read_file(config_file)
         if file_content:
-            new_config = yaml.load(file_content, Loader=yaml.SafeLoader)
+            new_config = yaml.safe_load(file_content)
             for key, value in new_config.items():
                 local_config.update({key: value})
     except (IOError, TypeError) as err:
@@ -195,10 +188,7 @@ def set_logging(log_level, log_file=None):
 def main():
     valid_logging_levels = ["info", "error", "exception"]
     args = parse_args()
-    try:
-        configuration = gen_config(args["config"])
-    except (IOError, TypeError):
-        sys.exit(1)
+    configuration = gen_config(args["config"])
     if configuration["LOGGING_LEVEL"] not in valid_logging_levels:
         raise ValueError("'{}' is not valid logging level. Choose one of {}".format(
             configuration["LOGGING_LEVEL"],
@@ -212,7 +202,10 @@ def main():
         sys.exit()
     logging.info("The latest logfile: %s", last_logfile.filename)
 
-    report_file = os.path.join(configuration["REPORT_DIR"], get_report_name(last_logfile.date))
+    report_file = os.path.join(
+        configuration["REPORT_DIR"],
+        "report-{}.html".format(last_logfile.date.strftime("%Y.%m.%d"))
+    )
     if os.path.exists(report_file):
         logging.info("Nothing to do. Report '%s' already exists", report_file)
         sys.exit()
